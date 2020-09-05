@@ -12,7 +12,7 @@ namespace DX.WPF
     public abstract partial class D3D : IDirect3D, IDisposable
     {
         class ArgPointer { public DrawEventArgs args = null; }
-        
+
         [DllImport("ntdll", CallingConvention = CallingConvention.Cdecl)]
         public static extern int NtDelayExecution([MarshalAs(UnmanagedType.I1)] bool alertable, ref Int64 DelayInterval);
 
@@ -23,7 +23,7 @@ namespace DX.WPF
         List<DateTime> frameTimes = new List<DateTime>();
 
         public int FPSLock { get; set; } = 60;
-        public bool SingleThreadedRender { get; set; } = true;
+        public bool SingleThreadedRender { get; set; } = false;
         Stopwatch frameTimer = new Stopwatch();
         double delayExtraDelay = 0;
 
