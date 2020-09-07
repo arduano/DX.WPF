@@ -10,7 +10,7 @@ namespace DX.WPF
 	/// This method makes it easier.
 	/// (Remark: I attempted to hack a correct Dispose implementation but it crashed the app on first GC!)
 	/// </summary>
-	public class DisposeGroup : IDisposable
+	class DisposeGroup : IDisposable
 	{
 		List<IDisposable> list = new List<IDisposable>();
 
