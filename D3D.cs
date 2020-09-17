@@ -6,6 +6,8 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Threading;
 
 namespace DX.WPF
 {
@@ -32,6 +34,14 @@ namespace DX.WPF
         public D3D()
         {
             OnInteractiveInit();
+
+            Task.Run(() =>
+            {
+                runner = Dispatcher.CurrentDispatcher;
+                Dispatcher.Run();
+            });
+
+            SpinWait.SpinUntil(() => runner != null);
         }
 
         partial void OnInteractiveInit();
@@ -45,31 +55,39 @@ namespace DX.WPF
             if (disposed) return;
             disposed = true;
             renderThread?.Wait();
+            runner.BeginInvokeShutdown(DispatcherPriority.Send);
         }
 
         public Vector2 RenderSize { get; protected set; }
 
+        Dispatcher runner = null;
+
         public virtual void Reset(DrawEventArgs args)
         {
-            lock (argsPointer)
+            Action run = () =>
             {
-                int w = (int)Math.Ceiling(args.RenderSize.Width);
-                int h = (int)Math.Ceiling(args.RenderSize.Height);
-                if (w < 1 || h < 1)
-                    return;
+                lock (argsPointer)
+                {
+                    int w = (int)Math.Ceiling(args.RenderSize.Width);
+                    int h = (int)Math.Ceiling(args.RenderSize.Height);
+                    if (w < 1 || h < 1)
+                        return;
 
-                RenderSize = new Vector2(w, h);
+                    RenderSize = new Vector2(w, h);
 
-                Reset(w, h);
-                if (Resetted != null)
-                    Resetted(this, args);
+                    Reset(w, h);
+                    if (Resetted != null)
+                        Resetted(this, args);
 
-                argsPointer.args = args;
-                Render(args);
+                    argsPointer.args = args;
+                    Render(args);
 
-                if (args.Target != null)
-                    SetBackBuffer(args.Target);
-            }
+                    if (args.Target != null)
+                        Application.Current.Dispatcher.Invoke(() => SetBackBuffer(args.Target));
+                }
+            };
+
+            runner.InvokeAsync(run, DispatcherPriority.Send);
         }
 
         public virtual void Reset(int w, int h)
@@ -124,17 +142,20 @@ namespace DX.WPF
                         Thread.Sleep(100);
                         if (disposed) return;
                     }
-                    lock (argsPointer)
+                    runner.Invoke(() =>
                     {
-                        if (argsPointer.args == null || SingleThreadedRender) Thread.Sleep(100);
-                        else
+                        lock (argsPointer)
                         {
-                            argsPointer.args.TotalTime = renderTimer.Elapsed;
-                            argsPointer.args.DeltaTime = renderTimer.Elapsed - last;
-                            last = renderTimer.Elapsed;
-                            TrueRender();
+                            if (argsPointer.args == null || SingleThreadedRender) Thread.Sleep(100);
+                            else
+                            {
+                                argsPointer.args.TotalTime = renderTimer.Elapsed;
+                                argsPointer.args.DeltaTime = renderTimer.Elapsed - last;
+                                last = renderTimer.Elapsed;
+                                TrueRender();
+                            }
                         }
-                    }
+                    });
                     if (FPSLock != 0)
                     {
                         var desired = 10000000 / FPSLock;

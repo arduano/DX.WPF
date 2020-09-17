@@ -26,6 +26,13 @@ namespace DX.WPF
                 throw new NotSupportedException();
         }
 
+        public D3D11(Device device)
+        {
+            this.device = device;
+            if (device == null)
+                throw new NotSupportedException();
+        }
+
         public D3D11(Adapter a)
         {
             if (a == null)
