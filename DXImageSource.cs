@@ -18,7 +18,10 @@ namespace DX.WPF
             if (IsDisposed)
                 return;
 
+            Dispatcher.Invoke(() =>
+            {
                 SetBackBuffer((Texture)null);
+            });
             EndD3D9();
             isDisposed = true;
         }
@@ -49,7 +52,7 @@ namespace DX.WPF
         protected override void OnPropertyChanged(DependencyPropertyChangedEventArgs e)
         {
             base.OnPropertyChanged(e);
-            if(lastTexture != null)
+            if (lastTexture != null)
             {
                 SetBackBuffer(lastTexture);
             }
@@ -68,8 +71,13 @@ namespace DX.WPF
                 if (texture != backBuffer)
                 {
                     // if it's from the private (SDX9ImageSource) D3D9 device, dispose of it
-                    if (backBuffer != null && backBuffer.Device.NativePointer == d3d9.Device.NativePointer)
-                        toDelete = backBuffer;
+                    if (backBuffer != null)
+                    {
+                        if (backBuffer.IsDisposed)
+                            backBuffer = null;
+                        else if (backBuffer.Device.NativePointer == d3d9.Device.NativePointer)
+                            toDelete = backBuffer;
+                    }
                     backBuffer = texture;
                 }
 
@@ -87,7 +95,6 @@ namespace DX.WPF
                 {
                     Lock();
                     SetBackBuffer(D3DResourceType.IDirect3DSurface9, IntPtr.Zero);
-                    AddDirtyRect(new Int32Rect(0, 0, base.PixelWidth, base.PixelHeight));
                     Unlock();
                 }
             }
