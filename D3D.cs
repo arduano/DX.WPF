@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Linq.Expressions;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,7 +26,36 @@ namespace DX.WPF
         List<DateTime> frameTimes = new List<DateTime>();
 
         public int FPSLock { get; set; } = 60;
-        public bool SingleThreadedRender { get; set; } = false;
+        public bool SingleThreadedRender { 
+            get => runner == null;
+            set
+            {
+                var current = SingleThreadedRender;
+                if (disposed) current = false;
+                if (current == value) return;
+                if (!value)
+                {
+                    var t = new Thread(() =>
+                    {
+                        runner = Dispatcher.CurrentDispatcher;
+                        Dispatcher.Run();
+
+                        Console.WriteLine("Dispatcher closed");
+                    });
+
+                    t.Start();
+
+                    SpinWait.SpinUntil(() => runner != null);
+                }
+                else
+                {
+                    runner?.BeginInvokeShutdown(DispatcherPriority.Send);
+                    runner = null;
+                    renderThread?.Wait();
+                    renderThread = null;
+                }
+            } 
+        }
         Stopwatch frameTimer = new Stopwatch();
         double delayExtraDelay = 0;
 
@@ -34,14 +64,6 @@ namespace DX.WPF
         public D3D()
         {
             OnInteractiveInit();
-
-            Task.Run(() =>
-            {
-                runner = Dispatcher.CurrentDispatcher;
-                Dispatcher.Run();
-            });
-
-            SpinWait.SpinUntil(() => runner != null);
         }
 
         partial void OnInteractiveInit();
@@ -54,8 +76,7 @@ namespace DX.WPF
         {
             if (disposed) return;
             disposed = true;
-            renderThread?.Wait();
-            runner.BeginInvokeShutdown(DispatcherPriority.Send);
+            SingleThreadedRender = true;
         }
 
         public Vector2 RenderSize { get; protected set; }
@@ -87,7 +108,14 @@ namespace DX.WPF
                 }
             };
 
-            runner.InvokeAsync(run, DispatcherPriority.Send);
+            if (runner != null)
+            {
+                runner.InvokeAsync(run, DispatcherPriority.Send);
+            }
+            else
+            {
+                run();
+            }
         }
 
         public virtual void Reset(int w, int h)
@@ -112,15 +140,18 @@ namespace DX.WPF
         {
             RenderTime = args.TotalTime;
 
-            if (renderThread == null)
-            {
-                renderThread = StartRenderThread();
-            }
             if (SingleThreadedRender)
             {
                 lock (argsPointer)
                 {
                     TrueRender();
+                }
+            }
+            else
+            {
+                if (renderThread == null || renderThread.IsCompleted)
+                {
+                    renderThread = StartRenderThread();
                 }
             }
             argsPointer.args = args;
@@ -131,48 +162,62 @@ namespace DX.WPF
             return
             Task.Run(() =>
             {
-                renderTimer.Start();
-                TimeSpan last = renderTimer.Elapsed;
-                frameTimes.Add(DateTime.UtcNow);
-                while (!disposed)
+                try
                 {
-                    frameTimer.Start();
-                    while (SingleThreadedRender)
+
+                    renderTimer.Start();
+                    TimeSpan last = renderTimer.Elapsed;
+                    frameTimes.Add(DateTime.UtcNow);
+                    while (!SingleThreadedRender)
                     {
-                        Thread.Sleep(100);
-                        if (disposed) return;
-                    }
-                    runner.Invoke(() =>
-                    {
-                        lock (argsPointer)
+                        frameTimer.Start();
+                        while (SingleThreadedRender)
                         {
-                            if (argsPointer.args == null || SingleThreadedRender) Thread.Sleep(100);
-                            else
+                            Thread.Sleep(100);
+                            if (SingleThreadedRender) return;
+                        }
+
+                        try
+                        {
+                            if (runner.HasShutdownStarted) return;
+                            runner.Invoke(() =>
                             {
-                                argsPointer.args.TotalTime = renderTimer.Elapsed;
-                                argsPointer.args.DeltaTime = renderTimer.Elapsed - last;
-                                last = renderTimer.Elapsed;
-                                TrueRender();
-                            }
+                                lock (argsPointer)
+                                {
+                                    if (argsPointer.args == null || SingleThreadedRender) Thread.Sleep(100);
+                                    else
+                                    {
+                                        argsPointer.args.TotalTime = renderTimer.Elapsed;
+                                        argsPointer.args.DeltaTime = renderTimer.Elapsed - last;
+                                        last = renderTimer.Elapsed;
+                                        TrueRender();
+                                    }
+                                }
+                            });
                         }
-                    });
-                    if (FPSLock != 0)
-                    {
-                        var desired = 10000000 / FPSLock;
-                        var elapsed = frameTimer.ElapsedTicks;
-                        long remaining = -(desired + (long)delayExtraDelay - elapsed);
-                        Stopwatch s = new Stopwatch();
-                        s.Start();
-                        if (remaining < 0)
+                        catch (OperationCanceledException e)
+                        { }
+
+                        if (FPSLock != 0)
                         {
-                            Thread.Sleep((int)(remaining / -10000));
-                            //NtDelayExecution(false, ref remaining);
+                            var desired = 10000000 / FPSLock;
+                            var elapsed = frameTimer.ElapsedTicks;
+                            long remaining = -(desired + (long)delayExtraDelay - elapsed);
+                            Stopwatch s = new Stopwatch();
+                            s.Start();
+                            if (remaining < 0)
+                            {
+                                Thread.Sleep((int)(remaining / -10000));
+                                //NtDelayExecution(false, ref remaining);
+                            }
+                            var excess = desired - frameTimer.ElapsedTicks;
+                            delayExtraDelay = (delayExtraDelay * 60 + excess) / 61;
                         }
-                        var excess = desired - frameTimer.ElapsedTicks;
-                        delayExtraDelay = (delayExtraDelay * 60 + excess) / 61;
+                        frameTimer.Reset();
                     }
-                    frameTimer.Reset();
                 }
+                catch (Exception e)
+                { }
             });
         }
 
